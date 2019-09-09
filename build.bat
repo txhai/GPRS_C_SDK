@@ -1,16 +1,21 @@
 
 @echo off
 REM //set you csdtk path
-set USER_CSDTK=%GPRS_CSDTK42_PATH%
-if %USER_CSDTK%a==a (echo NO CSDTK,please install CSDTK firstly  && pause && exit)
+set USER_SDK=%A9G_SDK%
+if %USER_SDK%a==a (echo NO CSDTK,please install CSDTK firstly  && pause && exit)
+
+REM //cd from visual studo workdir to SDK SOURCE DIR
+set IOT_C_SDK=%USER_SDK%\C_SDK
+set LOCAL_APP=%cd%
+chdir /d %IOT_C_SDK%
 
 set startTime=%time%
 
 
-if not defined CSDTK4INSTALLDIR (
+if not defined A9GSDK_WORKDIR (
     set ptemp=platform\compilation\win32;
-    echo CSDTK PATH: %USER_CSDTK%
-    call %USER_CSDTK%\CSDTKvars.bat
+    echo SDK PATH: %USER_SDK%
+    call %USER_SDK%\PRE_PATH.bat
     REM echo first time set csdtk auto
 ) else (
     set ptemp=
@@ -19,15 +24,16 @@ set PATH=%ptemp%%PATH%
 set SOFT_WORKDIR=%cd:\=/%
 set BUILD_PATH=%cd%
 set compileMode=debug
-
+set compileDir=Debug
 
 if "%1%"x =="demo"x (
     set PROJ_NAME=%2%
     if "%3%"x =="release"x (
         set compileMode=release
+		set compileDir=Release
     )
     sed -i "15d" Makefile
-    sed -i "15i\PROJECT_PATH += demo/%2%" Makefile
+    sed -i "15i\LOCAL_MODULE_DEPENDS += demo/%2%" Makefile
     goto compile
     REM goto end_exit
 )else (
@@ -37,19 +43,46 @@ if "%1%"x =="demo"x (
         if "%1%"x =="fota"x (
             goto run_fota
         ) else (
-            if exist "%1%" (
-                set PROJ_NAME=%1%
-                if "%2%"x =="release"x (
-                    set compileMode=release
-                )
-                sed -i "15d" Makefile
-                sed -i "15i\PROJECT_PATH += %1%" Makefile
-                goto compile                     
-                REM goto end_exit
-            ) else (
-                echo param %1% is not illege 
-                goto usage_help
-            )
+			if "%1%"x =="vs"x (
+				echo BUILD FROM VISUAL STUDIO: %LOCAL_APP%
+				REM Create folder and copy source code from visual studio
+				if exist "%BUILD_PATH%\%2%" (
+					rd /s/q %BUILD_PATH%\%2%
+				)
+								
+				md %BUILD_PATH%\%2%
+				md %BUILD_PATH%\%2%\src
+				REM copy
+				xcopy /s /c /y %LOCAL_APP%\*.c %BUILD_PATH%\%2%\src > nul
+				xcopy /s /c /y %LOCAL_APP%\*.cpp %BUILD_PATH%\%2%\src > nul
+				xcopy /s /c /y %LOCAL_APP%\*.h %BUILD_PATH%\%2%\src > nul
+				xcopy /s /c /y %LOCAL_APP%\Makefile %BUILD_PATH%\%2% > nul
+				
+				REM pre build
+				set PROJ_NAME=%2%
+				if "%3%"x =="release"x (
+					set compileMode=release
+				)
+				sed -i "15d" Makefile
+				sed -i "15i\LOCAL_MODULE_DEPENDS += %2%" Makefile
+				
+				goto buildvs
+			) else (
+				if exist "%1%" (
+					set PROJ_NAME=%1%
+					if "%2%"x =="release"x (
+						set compileMode=release
+					)
+					sed -i "15d" Makefile
+					sed -i "15i\LOCAL_MODULE_DEPENDS += %1%" Makefile
+					
+					goto compile         
+					REM goto end_exit
+				) else (
+					echo param %1% is not illege 
+					goto usage_help
+				)
+			)
         )
     )
 ) 
@@ -64,6 +97,7 @@ if "%1%"x =="demo"x (
     )
     echo number of processors: %number_of_processors%
     make -r -j%number_of_processors% CT_RELEASE=%compileMode%  2>&1 | tee %LOG_FILE%
+	
     REM make -r -j4 CT_RELEASE=%compileMode%  2>&1 
     REM copy hex\%PROJ_NAME%\%PROJ_NAME%_flash.lod hex\%PROJ_NAME%\%PROJ_NAME%_flash_%compileMode%.lod
     REM del hex\%PROJ_NAME%\%PROJ_NAME%_flash.lod
@@ -83,6 +117,21 @@ if "%1%"x =="demo"x (
     echo -------------------------------------------------
     echo ROM    total:%rom_total% Bytes     used:%rom_use% Bytes
     echo RAM    total:%ram_total% Bytes     used:%ram_use% Bytes
+	
+	if "%1%"x =="vs"x ( 
+		
+		if exist %LOCAL_APP%\%compileDir%\hex (
+			rd /s/q %LOCAL_APP%\%compileDir%\hex
+			rd /s/q %LOCAL_APP%\%compileDir%\build
+		)
+		mkdir %LOCAL_APP%\%compileDir%\hex
+		mkdir %LOCAL_APP%\%compileDir%\build
+		xcopy /s /e /y /q %BUILD_PATH%\hex\%PROJ_NAME% %LOCAL_APP%\%compileDir%\hex > null		
+		xcopy /s /e /y /q %BUILD_PATH%\build\%PROJ_NAME% %LOCAL_APP%\%compileDir%\build > null
+		
+		REM rd /s/q %BUILD_PATH%\%PROJ_NAME%
+		call build.bat clean all
+	)
     goto end_exit
 
 :clean_project
@@ -99,19 +148,19 @@ if "%1%"x =="demo"x (
     ) else (
         echo already clean
     )
-    echo clean complete
+    echo CLEAN OK
     goto end_exit
+	
+:buildvs
+    goto compile
 
 :run_fota         
     if exist "%2%" (
         if exist "%3%" (
-            echo [OTA] waiting for making fota pack...
-            echo       this will take a few minutes...
-            if not exist "hex\tmp" md hex\tmp
-            python platform\compilation\lodtool.py gen_ota --lod %2% --out hex\tmp\old_ota_lod.lod
-            python platform\compilation\lodtool.py gen_ota --lod %3% --out hex\tmp\new_ota_lod.lod
-            platform\compilation\fota\fotacreate.exe 4194304 65536 hex\tmp\old_ota_lod.lod hex\tmp\new_ota_lod.lod %4%
-            rd /q /s hex\tmp
+            echo waiting for making fota pack...
+            echo this will take a few minutes
+            REM platform\compilation\fota\fotacreate.exe 4194304 65536 0.lod 1.lod 0.pack
+            platform\compilation\fota\fotacreate.exe 4194304 65536 %2% % %3% % %4%
         ) else (
             echo usage: 'build.bat fota old.lod new.lod fota.pack'
         )
